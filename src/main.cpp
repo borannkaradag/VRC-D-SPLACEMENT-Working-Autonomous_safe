@@ -43,6 +43,7 @@ motor roller = motor(PORT18, ratio6_1, true);
 digital_out Piston = digital_out(Brain.ThreeWirePort.A);
 digital_out PistonB = digital_out(Brain.ThreeWirePort.E);
 digital_out PistonC = digital_out(Brain.ThreeWirePort.B);
+digital_out PistonD = digital_out(Brain.ThreeWirePort.C);
 
 // Controller
 controller Controller = controller();
@@ -56,6 +57,7 @@ distance Distance_sensor_front = distance(PORT15);
 const vex::controller::button &btn_PistonA = Controller.ButtonY;
 const vex::controller::button &btn_PistonB = Controller.ButtonX;
 const vex::controller::button &btn_PistonC = Controller.ButtonA;
+const vex::controller::button &btn_PistonD = Controller.ButtonB;
 
 const vex::controller::button &btn_IntakeIn = Controller.ButtonL1;
 const vex::controller::button &btn_IntakeOut = Controller.ButtonL2;
@@ -79,6 +81,9 @@ bool isButtonBPressed = false;
 
 bool isPistonCExtended = false;
 bool isButtonCPressed = false;
+
+bool isPistonDExtended = false;
+bool isButtonDPressed = false;
 
 // --- Functions ---
 void togglePistonA()
@@ -120,6 +125,20 @@ void togglePistonC()
   {
     PistonC.set(true);
     isPistonCExtended = true;
+  }
+}
+
+void togglePistonD()
+{
+  if (isPistonDExtended)
+  {
+    PistonD.set(false);
+    isPistonDExtended = false;
+  }
+  else
+  {
+    PistonD.set(true);
+    isPistonDExtended = true;
   }
 }
 
@@ -224,7 +243,7 @@ void drivePID(double target_distance_mm, double motor_power, double threshold) /
     LeftMotorGroup.spin(forward, motorPower, volt);
     RightMotorGroup.spin(forward, motorPower, volt);
 
-    wait(1, msec); // Don't hog the CPU
+    wait(10, msec);
   }
 
   LeftMotorGroup.stop(brake);
@@ -274,41 +293,57 @@ void drivePID_FRONT(double target_distance_mm, double motor_power, double thresh
   RightMotorGroup.stop(brake);
 }
 
-void advanced_autonomous(vex::distance PID_distance_sensor, double target_distance_mm, double max_motor_power, double error_margin, double targeted_heading, double kP, double kI, double kD, double delta_t)
+void PID_straight(vex::distance PID_distance_sensor, double target_distance_mm, double max_motor_power, double error_margin, double targeted_heading, double kP_DriveHeading, double kP, double kI, double kD, double delta_t, double sign)
 {
 
   float current_distance = PID_distance_sensor.objectDistance(mm);
   float actual_error = target_distance_mm - current_distance;
+  double total_error = 0;
   double last_error = 0;
 
-  while (actual_error > error_margin)
+  while (std::abs(actual_error) > error_margin)
   {
-    float current_distance = PID_distance_sensor.objectDistance(mm);
-    float actual_error = target_distance_mm - current_distance;
+    current_distance = PID_distance_sensor.objectDistance(mm);
+    actual_error = target_distance_mm - current_distance;
+    double dt = delta_t / 1000;
+
+    double heading_error = targeted_heading - Inertial.heading();
+    double heading_correction = heading_error * kP_DriveHeading;
 
     float P = actual_error * kP;
+    if (std::abs(actual_error) < 50)
+    {
+      total_error += actual_error;
+    }
+    else
+    {
+      total_error = 0;
+    }
+    double I = total_error * kI;
 
-    float integral = actual_error + last_error;
-    float I = actual_error * kI;
-
-    float derivative = (actual_error + last_error) / delta_t;
+    float derivative = (actual_error - last_error) / dt;
     float D = derivative * kD;
     double motor_output = P + I + D;
 
-    if (motor_output >= max_motor_power)
-    {
+    if (motor_output > max_motor_power)
       motor_output = max_motor_power;
-    }
+    if (motor_output < -max_motor_power)
+      motor_output = -max_motor_power;
 
-    LeftMotorGroup.spin(reverse, motor_output, volt);
-    RightMotorGroup.spin(forward, motor_output, volt);
+    double left_power = motor_output + heading_correction;
+    double right_power = motor_output - heading_correction;
+
+    LeftMotorGroup.spin(forward, motor_output * sign, volt);
+    RightMotorGroup.spin(forward, motor_output * sign, volt);
 
     last_error = actual_error;
     wait(delta_t, msec);
   }
+  LeftMotorGroup.stop(brake);
+  RightMotorGroup.stop(brake);
 }
 
-void autonomous(void)
+void autonomous_left_four_score(void)
 {
   PistonC.set(true);
   roller.setVelocity(100, percent);
@@ -319,7 +354,7 @@ void autonomous(void)
 
   drivePID(400.0, 8.0, 20.0);
   turnTo(90);
-  drivePID(410, 4.75, 7.0);
+  PID_straight(Distance_sensor, 410.0, 10, 10.0, 90, 0.15, 0.1, 0.01, 0.005, 10, 1);
   turnTo(180);
   wait(1, msec);
   roller.setVelocity(600, rpm);
@@ -331,11 +366,11 @@ void autonomous(void)
     LeftMotorGroup.spin(reverse, 5.0, volt);
     RightMotorGroup.spin(reverse, 5.0, volt);
     wait(100, msec);
-    LeftMotorGroup.spin(forward, 7.0, volt);
-    RightMotorGroup.spin(forward, 7.0, volt);
-    wait(100, msec);
+    LeftMotorGroup.spin(forward, 8, volt);
+    RightMotorGroup.spin(forward, 8, volt);
+    wait(200, msec);
   }
-  wait(700, msec);
+  wait(400, msec);
   LeftMotorGroup.stop(brake);
   RightMotorGroup.stop(brake);
   // ---------------------------------
@@ -347,6 +382,51 @@ void autonomous(void)
   drivePID(825, 6, 20);
 
   PistonB.set(true);
+}
+
+int firePistonC()
+{
+  wait(1200, msec); // Optional: small delay before firing
+  PistonC.set(true);
+  return 0;
+}
+
+void seven_goal_auton()
+{
+  roller.spin(forward, 11, volt);
+  intake.spin(reverse, 11, volt);
+  turnTo(350);
+  vex::task pistonTask(firePistonC);
+  PID_straight(Distance_sensor, 830.0, 10, 10.0, 350, 0.15, 0.1, 0.01, 0.005, 10, 1);
+  PID_straight(Distance_sensor, 930.0, 10, 10.0, 350, 0.15, 0.1, 0.01, 0.005, 10, 1);
+  turnTo(250);
+  PID_straight(Distance_sensor_front, 680.0, 10.5, 10.0, 250, 0.15, 0.2, 0.01, 0.005, 10, -1);
+  turnTo(270);
+  PID_straight(Distance_sensor_front, 720.0, 10.5, 10.0, 270, 0.15, 0.2, 0.01, 0.005, 10, -1);
+  turnTo(180);
+  PistonC.set(true);
+  PID_straight(Distance_sensor_front, 470.0, 10, 10, 180, 0.15, 0.1, 0.01, 0.005, 10, -1);
+  for (int i = 0; i < 4; i++)
+  {
+    LeftMotorGroup.spin(reverse, 5.0, volt);
+    RightMotorGroup.spin(reverse, 5.0, volt);
+    wait(100, msec);
+    LeftMotorGroup.spin(forward, 7.0, volt);
+    RightMotorGroup.spin(forward, 7.0, volt);
+    wait(200, msec);
+  }
+  PID_straight(Distance_sensor_front, 710.0, 10.5, 10.0, 350, 0.15, 0.1, 0.01, 0.005, 10, -1);
+  turnTo(0);
+  PistonC.set(false);
+  LeftMotorGroup.spin(forward, 11, volt);
+  RightMotorGroup.spin(forward, 11, volt);
+  wait(300, msec);
+  PistonB.set(true);
+}
+
+void autonomous(void)
+{
+  autonomous_left_four_score();
 }
 
 /* User Control Task - UPDATED WITH VARIABLE BUTTONS */
@@ -397,6 +477,18 @@ int motors_pneumatics(void)
       isButtonCPressed = false;
     }
 
+    if (btn_PistonD.pressing())
+    {
+      if (!isButtonDPressed)
+      {
+        togglePistonD();
+        isButtonDPressed = true;
+      }
+    }
+    else
+    {
+      isButtonDPressed = false;
+    }
     // --- ROLLER (FIXED VELOCITY/DIRECTION) ---
     if (btn_RollerFwd.pressing())
     {
