@@ -224,7 +224,7 @@ void drivePID(double target_distance_mm, double motor_power, double threshold) /
     LeftMotorGroup.spin(forward, motorPower, volt);
     RightMotorGroup.spin(forward, motorPower, volt);
 
-    wait(1, msec); // Don't hog the CPU
+    wait(10, msec);
   }
 
   LeftMotorGroup.stop(brake);
@@ -274,41 +274,57 @@ void drivePID_FRONT(double target_distance_mm, double motor_power, double thresh
   RightMotorGroup.stop(brake);
 }
 
-void advanced_autonomous(vex::distance PID_distance_sensor, double target_distance_mm, double max_motor_power, double error_margin, double targeted_heading, double kP, double kI, double kD, double delta_t)
+void PID_straight(vex::distance PID_distance_sensor, double target_distance_mm, double max_motor_power, double error_margin, double targeted_heading, double kP_DriveHeading, double kP, double kI, double kD, double delta_t, double sign)
 {
 
   float current_distance = PID_distance_sensor.objectDistance(mm);
   float actual_error = target_distance_mm - current_distance;
+  double total_error = 0;
   double last_error = 0;
 
-  while (actual_error > error_margin)
+  while (std::abs(actual_error) > error_margin)
   {
-    float current_distance = PID_distance_sensor.objectDistance(mm);
-    float actual_error = target_distance_mm - current_distance;
+    current_distance = PID_distance_sensor.objectDistance(mm);
+    actual_error = target_distance_mm - current_distance;
+    double dt = delta_t / 1000;
+
+    double heading_error = targeted_heading - Inertial.heading();
+    double heading_correction = heading_error * kP_DriveHeading;
 
     float P = actual_error * kP;
+    if (std::abs(actual_error) < 50)
+    {
+      total_error += actual_error;
+    }
+    else
+    {
+      total_error = 0;
+    }
+    double I = total_error * kI;
 
-    float integral = actual_error + last_error;
-    float I = actual_error * kI;
-
-    float derivative = (actual_error + last_error) / delta_t;
+    float derivative = (actual_error - last_error) / dt;
     float D = derivative * kD;
     double motor_output = P + I + D;
 
-    if (motor_output >= max_motor_power)
-    {
+    if (motor_output > max_motor_power)
       motor_output = max_motor_power;
-    }
+    if (motor_output < -max_motor_power)
+      motor_output = -max_motor_power;
 
-    LeftMotorGroup.spin(reverse, motor_output, volt);
-    RightMotorGroup.spin(forward, motor_output, volt);
+    double left_power = motor_output + heading_correction;
+    double right_power = motor_output - heading_correction;
+
+    LeftMotorGroup.spin(forward, motor_output * sign, volt);
+    RightMotorGroup.spin(forward, motor_output * sign, volt);
 
     last_error = actual_error;
     wait(delta_t, msec);
   }
+  LeftMotorGroup.stop(brake);
+  RightMotorGroup.stop(brake);
 }
 
-void autonomous(void)
+void autonomous_left_four_score(void)
 {
   PistonC.set(true);
   roller.setVelocity(100, percent);
@@ -347,6 +363,50 @@ void autonomous(void)
   drivePID(825, 6, 20);
 
   PistonB.set(true);
+}
+
+int firePistonC()
+{
+  wait(1200, msec); // Optional: small delay before firing
+  PistonC.set(true);
+  return 0;
+}
+
+void seven_goal_auton()
+{
+  roller.spin(forward, 11, volt);
+  intake.spin(reverse, 11, volt);
+  turnTo(350);
+  vex::task pistonTask(firePistonC);
+  PID_straight(Distance_sensor, 830.0, 10, 10.0, 350, 0.15, 0.1, 0.01, 0.005, 10, 1);
+  PID_straight(Distance_sensor, 930.0, 10, 10.0, 350, 0.15, 0.1, 0.01, 0.005, 10, 1);
+  turnTo(250);
+  PID_straight(Distance_sensor_front, 680.0, 10, 10.0, 250, 0.15, 0.2, 0.01, 0.005, 10, -1);
+  turnTo(270);
+  PID_straight(Distance_sensor_front, 720.0, 10, 10.0, 270, 0.15, 0.2, 0.01, 0.005, 10, -1);
+  turnTo(180);
+  PistonC.set(true);
+  PID_straight(Distance_sensor_front, 470.0, 10, 10.0, 180, 0.15, 0.1, 0.01, 0.005, 10, -1);
+  for (int i = 0; i < 5; i++)
+  {
+    LeftMotorGroup.spin(reverse, 5.0, volt);
+    RightMotorGroup.spin(reverse, 5.0, volt);
+    wait(100, msec);
+    LeftMotorGroup.spin(forward, 7.0, volt);
+    RightMotorGroup.spin(forward, 7.0, volt);
+    wait(100, msec);
+  }
+  wait(700, msec);
+  PID_straight(Distance_sensor_front, 710.0, 10, 10.0, 350, 0.15, 0.1, 0.01, 0.005, 10, -1);
+  turnTo(0); // This will only run AFTER the 800 degrees are finished
+  PistonC.set(false);
+  PID_straight(Distance_sensor, 825.0, 10, 10.0, 350, 0.15, 0.3, 0.01, 0.005, 10, 1);
+  PistonB.set(true);
+}
+
+void autonomous(void)
+{
+  seven_goal_auton();
 }
 
 /* User Control Task - UPDATED WITH VARIABLE BUTTONS */
